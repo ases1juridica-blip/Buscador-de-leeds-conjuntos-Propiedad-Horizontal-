@@ -1,0 +1,7 @@
+{
+  "name": "PropLead Finder Colombia",
+  "description": "Herramienta automatizada para la prospección de conjuntos residenciales en Colombia, extrayendo datos de contacto para campañas de marketing de propiedad horizontal.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}

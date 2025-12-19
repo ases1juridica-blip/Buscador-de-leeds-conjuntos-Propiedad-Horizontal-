@@ -1,11 +1,16 @@
 
-import React, { useState } from 'react';
-import { Lead } from './types';
+import React, { useState, useEffect } from 'react';
+import { Lead, CampaignLog } from './types';
 import { findLeads } from './services/geminiService';
 import LeadTable from './components/LeadTable';
 import TemplateManager from './components/TemplateManager';
 import ProposalModal from './components/ProposalModal';
+import LeadFormModal from './components/LeadFormModal';
+import CampaignModal from './components/CampaignModal';
+import CampaignLogView from './components/CampaignLogView';
 import { GoogleGenAI } from "@google/genai";
+
+const STORAGE_KEY_LOGS = 'SA_CAMPAIGN_LOGS';
 
 const DEFAULT_TEMPLATE = `Bogotá, {{FECHA}}
 
@@ -33,7 +38,7 @@ Términos:
 
 4. Valor de los honorarios: Cinco (5) salarios mínimos legales mensuales vigentes (5 SMLMV) fuera de retenciones.
 
-Sin otro particular, quedamos atentos a sus comentarios.
+Sin otro particular, quedamos atentos a sus comentarios. Para mayor información sobre nuestra trayectoria, pueden visitar nuestro sitio web: https://servijuridicoslaborales.com/
 
 Atentamente,
 
@@ -43,7 +48,9 @@ C.C. 51.672.493 | T.P. 104340 C.S. de la J.
 
 Jairo Segura A.
 Director General
-Segura & Asociados Abogados`;
+Celular: 3118967524
+Segura & Asociados Abogados
+Sitio Web: https://servijuridicoslaborales.com/`;
 
 const App: React.FC = () => {
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -55,7 +62,22 @@ const App: React.FC = () => {
   
   const [template, setTemplate] = useState(DEFAULT_TEMPLATE);
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
-  const [view, setView] = useState<'leads' | 'template'>('leads');
+  const [editingLead, setEditingLead] = useState<Lead | null>(null);
+  const [isCampaignOpen, setIsCampaignOpen] = useState(false);
+  const [view, setView] = useState<'leads' | 'template' | 'logs'>('leads');
+  const [campaignLogs, setCampaignLogs] = useState<CampaignLog[]>([]);
+
+  // Load logs from local storage on init
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY_LOGS);
+    if (saved) {
+      try {
+        setCampaignLogs(JSON.parse(saved));
+      } catch (e) {
+        console.error("Error parsing campaign logs", e);
+      }
+    }
+  }, []);
 
   const handleSearch = async () => {
     setLoading(true);
@@ -91,10 +113,49 @@ const App: React.FC = () => {
     setLeads(prev => prev.map(l => l.id === id ? { ...l, status: 'procesado' } : l));
   };
 
+  const handleUpdateLead = (updatedLead: Lead) => {
+    setLeads(prev => prev.map(l => l.id === updatedLead.id ? updatedLead : l));
+    setEditingLead(null);
+  };
+
+  const handleCampaignComplete = (log: CampaignLog) => {
+    const sentIds = log.recipients.filter(r => r.status === 'success').map(r => r.email);
+    // Update local lead status
+    setLeads(prev => prev.map(l => sentIds.includes(l.email) ? { ...l, status: 'enviado' } : l));
+    
+    // Save log
+    const updatedLogs = [log, ...campaignLogs];
+    setCampaignLogs(updatedLogs);
+    localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(updatedLogs));
+    
+    setIsCampaignOpen(false);
+    setView('logs');
+  };
+
   const exportToCSV = () => {
     if (leads.length === 0) return;
-    // Encabezados optimizados para Combinar Correspondencia de Word
-    const headers = ['CONJUNTO', 'ADMINISTRADOR', 'EMAIL', 'DIRECCION', 'TELEFONO', 'CIUDAD'];
+
+    const validationErrors: string[] = [];
+    
+    leads.forEach(l => {
+      const missingFields = [];
+      if (!l.nombreConjunto) missingFields.push('Nombre');
+      if (!l.email) missingFields.push('Email');
+      if (!l.direccion) missingFields.push('Dirección');
+      if (!l.telefono) missingFields.push('Teléfono');
+      
+      if (missingFields.length > 0) {
+        validationErrors.push(`• ${l.nombreConjunto || 'Conjunto sin nombre (ID: ' + l.id + ')'}: falta ${missingFields.join(', ')}`);
+      }
+    });
+
+    if (validationErrors.length > 0) {
+      const detailedMessage = `No se puede exportar. Los siguientes prospectos están incompletos:\n\n${validationErrors.slice(0, 8).join('\n')}${validationErrors.length > 8 ? '\n... y otros ' + (validationErrors.length - 8) + ' más.' : ''}\n\nPor favor, usa el botón de editar (✏️) en la tabla para completar la información antes de continuar.`;
+      alert(detailedMessage);
+      return;
+    }
+
+    const headers = ['CONJUNTO', 'ADMINISTRADOR', 'EMAIL', 'DIRECCION', 'TELEFONO', 'CIUDAD', 'FECHA_CAPTURA'];
     const csvContent = [
       headers.join(','),
       ...leads.map(l => [
@@ -103,16 +164,19 @@ const App: React.FC = () => {
         `"${l.email}"`, 
         `"${l.direccion.replace(/"/g, '""')}"`, 
         `"${l.telefono}"`, 
-        `"${l.ciudad}"`
+        `"${l.ciudad}"`,
+        `"${l.fechaCreacion}"`
       ].join(','))
     ].join('\n');
-    
+
     const blob = new Blob(["\ufeff" + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `base_datos_marketing_S&A_${ciudad}.csv`;
+    link.download = `base_datos_S&A_${ciudad.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
   };
+
+  const procesadosCount = leads.filter(l => l.status === 'procesado').length;
 
   return (
     <div className="min-h-screen bg-slate-50 pb-20">
@@ -126,18 +190,9 @@ const App: React.FC = () => {
             </div>
           </div>
           <div className="flex bg-slate-800 p-1 rounded-xl">
-            <button 
-              onClick={() => setView('leads')}
-              className={`px-6 py-1.5 rounded-lg text-sm font-bold transition-all ${view === 'leads' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
-            >
-              Buscador
-            </button>
-            <button 
-              onClick={() => setView('template')}
-              className={`px-6 py-1.5 rounded-lg text-sm font-bold transition-all ${view === 'template' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
-            >
-              Plantilla
-            </button>
+            <button onClick={() => setView('leads')} className={`px-4 py-1.5 rounded-lg text-xs font-black transition-all ${view === 'leads' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>Buscador</button>
+            <button onClick={() => setView('template')} className={`px-4 py-1.5 rounded-lg text-xs font-black transition-all ${view === 'template' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>Plantilla</button>
+            <button onClick={() => setView('logs')} className={`px-4 py-1.5 rounded-lg text-xs font-black transition-all ${view === 'logs' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}>Historial</button>
           </div>
         </div>
       </header>
@@ -145,111 +200,63 @@ const App: React.FC = () => {
       <main className="max-w-7xl mx-auto p-4 md:p-8">
         {view === 'template' ? (
           <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <TemplateManager 
-              template={template} 
-              setTemplate={setTemplate} 
-              onImprove={improveTemplate}
-              isImproving={isImproving}
-            />
+            <TemplateManager template={template} setTemplate={setTemplate} onImprove={improveTemplate} isImproving={isImproving} />
+          </div>
+        ) : view === 'logs' ? (
+          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+            <h2 className="text-2xl font-black text-slate-800 tracking-tight mb-8">Historial de Campañas</h2>
+            <CampaignLogView logs={campaignLogs} />
           </div>
         ) : (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            {/* Search Panel */}
-            <div className="bg-white p-8 rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-200">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="p-2 bg-blue-50 rounded-lg text-blue-600">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                  </svg>
-                </div>
-                <div>
-                  <h3 className="text-lg font-bold text-slate-800">Nueva Prospección</h3>
-                  <p className="text-sm text-slate-500">Encuentra conjuntos residenciales para tu campaña</p>
-                </div>
-              </div>
+            {/* Panel de Búsqueda */}
+            <div className="bg-white p-8 rounded-2xl shadow-xl border border-slate-200">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
                 <div>
                   <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Ciudad / Sector</label>
-                  <input 
-                    type="text" 
-                    value={ciudad}
-                    onChange={(e) => setCiudad(e.target.value)}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-medium transition-all"
-                    placeholder="Ej: Engativá, Bogotá"
-                  />
+                  <input type="text" value={ciudad} onChange={(e) => setCiudad(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-medium" />
                 </div>
                 <div>
                   <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Resultados</label>
-                  <select 
-                    value={cantidad}
-                    onChange={(e) => setCantidad(Number(e.target.value))}
-                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-medium transition-all"
-                  >
+                  <select value={cantidad} onChange={(e) => setCantidad(Number(e.target.value))} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-medium">
                     <option value={5}>5 Conjuntos</option>
                     <option value={10}>10 Conjuntos</option>
                     <option value={25}>25 Conjuntos</option>
                   </select>
                 </div>
-                <button 
-                  onClick={handleSearch}
-                  disabled={loading}
-                  className="w-full px-6 py-3.5 bg-blue-600 text-white rounded-xl font-black hover:bg-blue-700 disabled:bg-blue-300 transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-200"
-                >
-                  {loading ? (
-                    <>
-                      <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                      </svg>
-                      Buscando...
-                    </>
-                  ) : 'Iniciar Búsqueda'}
+                <button onClick={handleSearch} disabled={loading} className="w-full px-6 py-3.5 bg-blue-600 text-white rounded-xl font-black hover:bg-blue-700 disabled:bg-blue-300 transition-all shadow-lg shadow-blue-200">
+                  {loading ? 'Buscando...' : 'Iniciar Búsqueda'}
                 </button>
               </div>
-              {error && <div className="mt-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm border border-red-100 flex items-center gap-2 font-medium">
-                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
-                {error}
-              </div>}
             </div>
 
             <div className="flex flex-col md:flex-row items-center justify-between gap-4 px-2">
-              <div className="flex items-center gap-4">
-                <h2 className="text-2xl font-black text-slate-800 tracking-tight">Leads Encontrados</h2>
-                <span className="bg-slate-200 text-slate-600 px-3 py-1 rounded-full text-xs font-bold">{leads.length} registros</span>
-              </div>
+              <h2 className="text-2xl font-black text-slate-800 tracking-tight">Leads Encontrados</h2>
               <div className="flex gap-2">
-                <button 
-                  onClick={exportToCSV}
-                  disabled={leads.length === 0}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-black hover:bg-emerald-700 disabled:opacity-50 transition-all shadow-lg shadow-emerald-100"
-                >
+                <button onClick={exportToCSV} disabled={leads.length === 0} className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-black hover:bg-emerald-700 disabled:opacity-50 transition-all shadow-lg">
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
-                  Exportar Excel para Word
+                  Exportar Excel
+                </button>
+                <button 
+                  onClick={() => setIsCampaignOpen(true)}
+                  disabled={procesadosCount === 0}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-black hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-lg shadow-indigo-100"
+                >
+                  🚀 Iniciar Campaña ({procesadosCount})
                 </button>
               </div>
             </div>
 
-            <LeadTable 
-              leads={leads} 
-              onDelete={(id) => setLeads(leads.filter(l => l.id !== id))}
-              onEdit={(lead) => setSelectedLead(lead)} 
-            />
+            <LeadTable leads={leads} onDelete={(id) => setLeads(leads.filter(l => l.id !== id))} onSelectForProposal={(lead) => setSelectedLead(lead)} onEditLead={(lead) => setEditingLead(lead)} />
           </div>
         )}
       </main>
 
-      {selectedLead && (
-        <ProposalModal 
-          lead={selectedLead}
-          template={template}
-          onClose={() => {
-            markAsProcesado(selectedLead.id);
-            setSelectedLead(null);
-          }}
-        />
-      )}
+      {selectedLead && <ProposalModal lead={selectedLead} template={template} onClose={() => { markAsProcesado(selectedLead.id); setSelectedLead(null); }} />}
+      {editingLead && <LeadFormModal lead={editingLead} onSave={handleUpdateLead} onClose={() => setEditingLead(null)} />}
+      {isCampaignOpen && <CampaignModal leads={leads} template={template} onClose={() => setIsCampaignOpen(false)} onComplete={handleCampaignComplete} />}
     </div>
   );
 };

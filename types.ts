@@ -9,10 +9,24 @@ export interface Lead {
   sitioWeb: string;
   ciudad: string;
   fuente: string;
-  status?: 'pendiente' | 'procesado';
+  fechaCreacion: string;
+  status?: 'pendiente' | 'procesado' | 'enviado';
 }
 
 export interface SearchParams {
   ciudad: string;
   cantidad: number;
+}
+
+export interface CampaignRecipientLog {
+  leadName: string;
+  email: string;
+  status: 'success' | 'error';
+}
+
+export interface CampaignLog {
+  id: string;
+  date: string;
+  subject: string;
+  recipients: CampaignRecipientLog[];
 }

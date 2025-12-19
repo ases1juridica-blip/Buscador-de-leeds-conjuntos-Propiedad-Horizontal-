@@ -47,10 +47,13 @@ export const findLeads = async (ciudad: string, cantidad: number): Promise<Lead[
     });
 
     const leadsJson = JSON.parse(response.text || "[]");
-    return leadsJson.map((lead: any, index: number) => ({
+    const now = new Date().toISOString();
+    
+    return leadsJson.map((lead: any) => ({
       ...lead,
       id: Math.random().toString(36).substr(2, 9),
-      ciudad: lead.ciudad || ciudad
+      ciudad: lead.ciudad || ciudad,
+      fechaCreacion: now
     }));
   } catch (error) {
     console.error("Error fetching leads:", error);

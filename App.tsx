@@ -62,7 +62,8 @@ const App: React.FC = () => {
     setError(null);
     try {
       const newLeads = await findLeads(ciudad, cantidad);
-      setLeads(prev => [...newLeads, ...prev]);
+      const leadsWithStatus = newLeads.map(l => ({ ...l, status: 'pendiente' as const }));
+      setLeads(prev => [...leadsWithStatus, ...prev]);
     } catch (err: any) {
       setError("No se pudieron obtener los datos. Verifica tu conexión.");
     } finally {
@@ -86,17 +87,30 @@ const App: React.FC = () => {
     }
   };
 
+  const markAsProcesado = (id: string) => {
+    setLeads(prev => prev.map(l => l.id === id ? { ...l, status: 'procesado' } : l));
+  };
+
   const exportToCSV = () => {
     if (leads.length === 0) return;
-    const headers = ['Nombre Conjunto', 'Administrador', 'Email', 'Direccion', 'Telefono', 'Sitio Web', 'Ciudad'];
+    // Encabezados optimizados para Combinar Correspondencia de Word
+    const headers = ['CONJUNTO', 'ADMINISTRADOR', 'EMAIL', 'DIRECCION', 'TELEFONO', 'CIUDAD'];
     const csvContent = [
       headers.join(','),
-      ...leads.map(l => [`"${l.nombreConjunto}"`, `"${l.nombreAdministrador}"`, `"${l.email}"`, `"${l.direccion}"`, `"${l.telefono}"`, `"${l.sitioWeb}"`, `"${l.ciudad}"`].join(','))
+      ...leads.map(l => [
+        `"${l.nombreConjunto.replace(/"/g, '""')}"`, 
+        `"${(l.nombreAdministrador || 'Señor Administrador').replace(/"/g, '""')}"`, 
+        `"${l.email}"`, 
+        `"${l.direccion.replace(/"/g, '""')}"`, 
+        `"${l.telefono}"`, 
+        `"${l.ciudad}"`
+      ].join(','))
     ].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    
+    const blob = new Blob(["\ufeff" + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `leads_propiedad_horizontal.csv`;
+    link.download = `base_datos_marketing_S&A_${ciudad}.csv`;
     link.click();
   };
 
@@ -105,22 +119,22 @@ const App: React.FC = () => {
       <header className="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-40 shadow-lg">
         <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-xl">S&A</div>
+            <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-xl shadow-inner">S&A</div>
             <div>
-              <h1 className="text-xl font-bold">Segura & Asociados</h1>
-              <p className="text-[10px] text-slate-400 uppercase tracking-widest font-semibold">Prospección Propiedad Horizontal</p>
+              <h1 className="text-xl font-bold tracking-tight">Segura & Asociados</h1>
+              <p className="text-[10px] text-blue-400 uppercase tracking-[0.2em] font-black">Marketing Legal Automático</p>
             </div>
           </div>
-          <div className="flex bg-slate-800 p-1 rounded-lg">
+          <div className="flex bg-slate-800 p-1 rounded-xl">
             <button 
               onClick={() => setView('leads')}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${view === 'leads' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+              className={`px-6 py-1.5 rounded-lg text-sm font-bold transition-all ${view === 'leads' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
             >
               Buscador
             </button>
             <button 
               onClick={() => setView('template')}
-              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${view === 'template' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
+              className={`px-6 py-1.5 rounded-lg text-sm font-bold transition-all ${view === 'template' ? 'bg-blue-600 text-white shadow-md' : 'text-slate-400 hover:text-white'}`}
             >
               Plantilla
             </button>
@@ -141,53 +155,80 @@ const App: React.FC = () => {
         ) : (
           <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
             {/* Search Panel */}
-            <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
+            <div className="bg-white p-8 rounded-2xl shadow-xl shadow-slate-200/50 border border-slate-200">
+              <div className="flex items-center gap-3 mb-6">
+                <div className="p-2 bg-blue-50 rounded-lg text-blue-600">
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-lg font-bold text-slate-800">Nueva Prospección</h3>
+                  <p className="text-sm text-slate-500">Encuentra conjuntos residenciales para tu campaña</p>
+                </div>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">Ciudad en Colombia</label>
+                  <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Ciudad / Sector</label>
                   <input 
                     type="text" 
                     value={ciudad}
                     onChange={(e) => setCiudad(e.target.value)}
-                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-medium transition-all"
+                    placeholder="Ej: Engativá, Bogotá"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-bold text-slate-700 mb-2">Cantidad de leads</label>
+                  <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Resultados</label>
                   <select 
                     value={cantidad}
                     onChange={(e) => setCantidad(Number(e.target.value))}
-                    className="w-full px-4 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-medium transition-all"
                   >
-                    <option value={5}>5 Resultados</option>
-                    <option value={10}>10 Resultados</option>
-                    <option value={25}>25 Resultados</option>
+                    <option value={5}>5 Conjuntos</option>
+                    <option value={10}>10 Conjuntos</option>
+                    <option value={25}>25 Conjuntos</option>
                   </select>
                 </div>
                 <button 
                   onClick={handleSearch}
                   disabled={loading}
-                  className="w-full px-6 py-2.5 bg-blue-600 text-white rounded-lg font-bold hover:bg-blue-700 disabled:bg-blue-300 transition-all flex items-center justify-center gap-2"
+                  className="w-full px-6 py-3.5 bg-blue-600 text-white rounded-xl font-black hover:bg-blue-700 disabled:bg-blue-300 transition-all flex items-center justify-center gap-2 shadow-lg shadow-blue-200"
                 >
-                  {loading ? 'Buscando...' : 'Encontrar Conjuntos'}
+                  {loading ? (
+                    <>
+                      <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      Buscando...
+                    </>
+                  ) : 'Iniciar Búsqueda'}
                 </button>
               </div>
+              {error && <div className="mt-4 p-3 bg-red-50 text-red-700 rounded-lg text-sm border border-red-100 flex items-center gap-2 font-medium">
+                <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
+                {error}
+              </div>}
             </div>
 
-            <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-              <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
-                <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-                Base de Datos de Prospección
-              </h2>
-              <button 
-                onClick={exportToCSV}
-                disabled={leads.length === 0}
-                className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm font-bold hover:bg-emerald-700 disabled:opacity-50"
-              >
-                Exportar CSV para Word
-              </button>
+            <div className="flex flex-col md:flex-row items-center justify-between gap-4 px-2">
+              <div className="flex items-center gap-4">
+                <h2 className="text-2xl font-black text-slate-800 tracking-tight">Leads Encontrados</h2>
+                <span className="bg-slate-200 text-slate-600 px-3 py-1 rounded-full text-xs font-bold">{leads.length} registros</span>
+              </div>
+              <div className="flex gap-2">
+                <button 
+                  onClick={exportToCSV}
+                  disabled={leads.length === 0}
+                  className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-black hover:bg-emerald-700 disabled:opacity-50 transition-all shadow-lg shadow-emerald-100"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Exportar Excel para Word
+                </button>
+              </div>
             </div>
 
             <LeadTable 
@@ -203,7 +244,10 @@ const App: React.FC = () => {
         <ProposalModal 
           lead={selectedLead}
           template={template}
-          onClose={() => setSelectedLead(null)}
+          onClose={() => {
+            markAsProcesado(selectedLead.id);
+            setSelectedLead(null);
+          }}
         />
       )}
     </div>

@@ -9,6 +9,7 @@ export interface Lead {
   sitioWeb: string;
   ciudad: string;
   fuente: string;
+  status?: 'pendiente' | 'procesado';
 }
 
 export interface SearchParams {

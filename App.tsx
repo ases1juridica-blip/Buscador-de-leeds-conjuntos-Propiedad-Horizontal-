@@ -57,7 +57,7 @@ const App: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [isImproving, setIsImproving] = useState(false);
   const [ciudad, setCiudad] = useState('Bogotá');
-  const [cantidad, setCantidad] = useState(5);
+  const [cantidad, setCantidad] = useState(10);
   const [error, setError] = useState<string | null>(null);
   
   const [template, setTemplate] = useState(DEFAULT_TEMPLATE);
@@ -67,7 +67,6 @@ const App: React.FC = () => {
   const [view, setView] = useState<'leads' | 'template' | 'logs'>('leads');
   const [campaignLogs, setCampaignLogs] = useState<CampaignLog[]>([]);
 
-  // Load logs from local storage on init
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY_LOGS);
     if (saved) {
@@ -84,8 +83,7 @@ const App: React.FC = () => {
     setError(null);
     try {
       const newLeads = await findLeads(ciudad, cantidad);
-      const leadsWithStatus = newLeads.map(l => ({ ...l, status: 'pendiente' as const }));
-      setLeads(prev => [...leadsWithStatus, ...prev]);
+      setLeads(prev => [...newLeads, ...prev]);
     } catch (err: any) {
       setError("No se pudieron obtener los datos. Verifica tu conexión.");
     } finally {
@@ -119,61 +117,63 @@ const App: React.FC = () => {
   };
 
   const handleCampaignComplete = (log: CampaignLog) => {
-    const sentIds = log.recipients.filter(r => r.status === 'success').map(r => r.email);
-    // Update local lead status
-    setLeads(prev => prev.map(l => sentIds.includes(l.email) ? { ...l, status: 'enviado' } : l));
-    
-    // Save log
+    const sentEmails = log.recipients.filter(r => r.status === 'success').map(r => r.email);
+    setLeads(prev => prev.map(l => sentEmails.includes(l.email) ? { ...l, status: 'enviado' } : l));
     const updatedLogs = [log, ...campaignLogs];
     setCampaignLogs(updatedLogs);
     localStorage.setItem(STORAGE_KEY_LOGS, JSON.stringify(updatedLogs));
-    
     setIsCampaignOpen(false);
     setView('logs');
   };
 
-  const exportToCSV = () => {
-    if (leads.length === 0) return;
-
-    const validationErrors: string[] = [];
-    
-    leads.forEach(l => {
-      const missingFields = [];
-      if (!l.nombreConjunto) missingFields.push('Nombre');
-      if (!l.email) missingFields.push('Email');
-      if (!l.direccion) missingFields.push('Dirección');
-      if (!l.telefono) missingFields.push('Teléfono');
-      
-      if (missingFields.length > 0) {
-        validationErrors.push(`• ${l.nombreConjunto || 'Conjunto sin nombre (ID: ' + l.id + ')'}: falta ${missingFields.join(', ')}`);
-      }
-    });
-
-    if (validationErrors.length > 0) {
-      const detailedMessage = `No se puede exportar. Los siguientes prospectos están incompletos:\n\n${validationErrors.slice(0, 8).join('\n')}${validationErrors.length > 8 ? '\n... y otros ' + (validationErrors.length - 8) + ' más.' : ''}\n\nPor favor, usa el botón de editar (✏️) en la tabla para completar la información antes de continuar.`;
-      alert(detailedMessage);
-      return;
-    }
-
-    const headers = ['CONJUNTO', 'ADMINISTRADOR', 'EMAIL', 'DIRECCION', 'TELEFONO', 'CIUDAD', 'FECHA_CAPTURA'];
+  const generateAndDownloadCSV = (data: Lead[], fileName: string) => {
+    const headers = ['CONJUNTO', 'ADMINISTRADOR', 'EMAIL', 'DIRECCION', 'TELEFONO', 'CIUDAD', 'FECHA_CAPTURA', 'SITIO_WEB'];
     const csvContent = [
       headers.join(','),
-      ...leads.map(l => [
+      ...data.map(l => [
         `"${l.nombreConjunto.replace(/"/g, '""')}"`, 
         `"${(l.nombreAdministrador || 'Señor Administrador').replace(/"/g, '""')}"`, 
         `"${l.email}"`, 
         `"${l.direccion.replace(/"/g, '""')}"`, 
         `"${l.telefono}"`, 
         `"${l.ciudad}"`,
-        `"${l.fechaCreacion}"`
+        `"${l.fechaCreacion}"`,
+        `"${l.sitioWeb || ''}"`
       ].join(','))
     ].join('\n');
 
     const blob = new Blob(["\ufeff" + csvContent], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     link.href = URL.createObjectURL(blob);
-    link.download = `base_datos_S&A_${ciudad.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`;
+    link.download = fileName;
     link.click();
+  };
+
+  const exportInChunks = (chunkSize: number = 100) => {
+    if (leads.length === 0) return;
+
+    // Validación de campos obligatorios antes de exportar
+    const incomplete = leads.filter(l => !l.nombreConjunto || !l.email || !l.direccion || !l.telefono);
+    if (incomplete.length > 0) {
+      if (!confirm(`Hay ${incomplete.length} prospectos con información incompleta. ¿Deseas exportar de todos modos? Se recomienda editarlos primero.`)) {
+        return;
+      }
+    }
+
+    const totalChunks = Math.ceil(leads.length / chunkSize);
+    
+    for (let i = 0; i < totalChunks; i++) {
+      const start = i * chunkSize;
+      const end = start + chunkSize;
+      const chunk = leads.slice(start, end);
+      const timestamp = new Date().toISOString().split('T')[0];
+      const fileName = `Leads_S&A_${ciudad.replace(/\s+/g, '_')}_Parte_${i + 1}_de_${totalChunks}_${timestamp}.csv`;
+      
+      // Pequeño delay para no saturar las descargas del navegador si son muchos
+      setTimeout(() => {
+        generateAndDownloadCSV(chunk, fileName);
+      }, i * 500);
+    }
   };
 
   const procesadosCount = leads.filter(l => l.status === 'procesado').length;
@@ -217,34 +217,48 @@ const App: React.FC = () => {
                   <input type="text" value={ciudad} onChange={(e) => setCiudad(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-medium" />
                 </div>
                 <div>
-                  <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Resultados</label>
+                  <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Cantidad de Prospectos</label>
                   <select value={cantidad} onChange={(e) => setCantidad(Number(e.target.value))} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-medium">
-                    <option value={5}>5 Conjuntos</option>
                     <option value={10}>10 Conjuntos</option>
                     <option value={25}>25 Conjuntos</option>
+                    <option value={50}>50 Conjuntos</option>
+                    <option value={100}>100 Conjuntos (Recomendado)</option>
                   </select>
                 </div>
-                <button onClick={handleSearch} disabled={loading} className="w-full px-6 py-3.5 bg-blue-600 text-white rounded-xl font-black hover:bg-blue-700 disabled:bg-blue-300 transition-all shadow-lg shadow-blue-200">
-                  {loading ? 'Buscando...' : 'Iniciar Búsqueda'}
+                <button onClick={handleSearch} disabled={loading} className="w-full px-6 py-3.5 bg-blue-600 text-white rounded-xl font-black hover:bg-blue-700 disabled:bg-blue-300 transition-all shadow-lg shadow-blue-200 flex items-center justify-center gap-2">
+                  {loading ? (
+                    <>
+                      <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                      Extrayendo Datos...
+                    </>
+                  ) : '🚀 Iniciar Búsqueda Estratégica'}
                 </button>
               </div>
             </div>
 
             <div className="flex flex-col md:flex-row items-center justify-between gap-4 px-2">
-              <h2 className="text-2xl font-black text-slate-800 tracking-tight">Leads Encontrados</h2>
+              <div className="flex flex-col">
+                <h2 className="text-2xl font-black text-slate-800 tracking-tight">Leads Encontrados</h2>
+                <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Total en base: {leads.length}</p>
+              </div>
               <div className="flex gap-2">
-                <button onClick={exportToCSV} disabled={leads.length === 0} className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-black hover:bg-emerald-700 disabled:opacity-50 transition-all shadow-lg">
+                <button 
+                  onClick={() => exportInChunks(100)} 
+                  disabled={leads.length === 0} 
+                  className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-black hover:bg-emerald-700 disabled:opacity-50 transition-all shadow-lg shadow-emerald-100"
+                  title="Exporta archivos Excel/CSV de 100 registros cada uno"
+                >
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                   </svg>
-                  Exportar Excel
+                  Exportar en Lotes (100)
                 </button>
                 <button 
                   onClick={() => setIsCampaignOpen(true)}
                   disabled={procesadosCount === 0}
                   className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-black hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-lg shadow-indigo-100"
                 >
-                  🚀 Iniciar Campaña ({procesadosCount})
+                  ✉️ Campaña Masiva ({procesadosCount})
                 </button>
               </div>
             </div>

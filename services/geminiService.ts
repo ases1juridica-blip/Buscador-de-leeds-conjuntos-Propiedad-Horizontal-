@@ -6,17 +6,23 @@ export const findLeads = async (ciudad: string, cantidad: number): Promise<Lead[
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
   const prompt = `
-    Busca conjuntos residenciales o edificios de propiedad horizontal en ${ciudad}, Colombia.
-    Extrae la siguiente información para cada uno:
-    1. Nombre del conjunto residencial.
-    2. Nombre del administrador (si está disponible, si no poner "Por contactar").
-    3. Correo electrónico de contacto (administración o consejo).
-    4. Dirección física exacta.
-    5. Teléfono de contacto.
-    6. URL de su página web o perfil de red social.
+    Busca una lista extensa de exactamente ${cantidad} conjuntos residenciales, edificios de apartamentos o condominios de propiedad horizontal en ${ciudad}, Colombia.
+    
+    INSTRUCCIONES CRÍTICAS:
+    1. Debes proporcionar datos reales y verificables obtenidos a través de la búsqueda.
+    2. Evita duplicados.
+    3. Para cada registro, extrae:
+       - nombreConjunto: Nombre oficial de la copropiedad.
+       - nombreAdministrador: Nombre de la persona o empresa administradora (si no hay, poner "Administración - Por contactar").
+       - email: Correo electrónico corporativo o de la administración.
+       - direccion: Dirección completa incluyendo barrio si es posible.
+       - telefono: Teléfono fijo o celular de contacto.
+       - sitioWeb: URL del sitio, página de Facebook o Instagram oficial.
+       - ciudad: ${ciudad}.
+       - fuente: URL de donde se extrajo la información.
 
-    Enfócate en conjuntos que tengan presencia digital.
-    Devuelve exactamente ${cantidad} resultados.
+    Enfócate en conjuntos de estratos 4, 5 y 6 para asegurar que tengan administración formal.
+    Si la búsqueda no arroja ${cantidad} resultados únicos de una vez, intenta buscar por diferentes zonas de la ciudad para completar el cupo.
   `;
 
   try {
@@ -53,7 +59,8 @@ export const findLeads = async (ciudad: string, cantidad: number): Promise<Lead[
       ...lead,
       id: Math.random().toString(36).substr(2, 9),
       ciudad: lead.ciudad || ciudad,
-      fechaCreacion: now
+      fechaCreacion: now,
+      status: 'pendiente'
     }));
   } catch (error) {
     console.error("Error fetching leads:", error);

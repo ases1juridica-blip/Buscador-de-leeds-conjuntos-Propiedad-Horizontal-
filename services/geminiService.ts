@@ -6,23 +6,25 @@ export const findLeads = async (ciudad: string, cantidad: number): Promise<Lead[
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
   const prompt = `
-    Busca una lista extensa de exactamente ${cantidad} conjuntos residenciales, edificios de apartamentos o condominios de propiedad horizontal en ${ciudad}, Colombia.
+    ESTRATEGIA DE PROSPECCIÓN ÚNICA:
+    Busca una lista de ${cantidad} conjuntos residenciales, edificios o condominios en ${ciudad}, Colombia.
     
-    INSTRUCCIONES CRÍTICAS:
-    1. Debes proporcionar datos reales y verificables obtenidos a través de la búsqueda.
-    2. Evita duplicados.
-    3. Para cada registro, extrae:
-       - nombreConjunto: Nombre oficial de la copropiedad.
-       - nombreAdministrador: Nombre de la persona o empresa administradora (si no hay, poner "Administración - Por contactar").
-       - email: Correo electrónico corporativo o de la administración.
-       - direccion: Dirección completa incluyendo barrio si es posible.
-       - telefono: Teléfono fijo o celular de contacto.
-       - sitioWeb: URL del sitio, página de Facebook o Instagram oficial.
-       - ciudad: ${ciudad}.
-       - fuente: URL de donde se extrajo la información.
+    REGLAS ESTRICTAS PARA EVITAR REPETICIÓN:
+    1. NO busques solo en los sectores más famosos. Explora diversos barrios de estratos 4, 5 y 6.
+    2. Enfócate en copropiedades que tengan presencia digital (sitios web propios, páginas de Facebook de administración o perfiles en directorios).
+    3. Asegúrate de que cada correo electrónico sea corporativo (@dominio.com) o de administración oficial (@gmail.com / @outlook.com pero con nombre del conjunto).
+    
+    CAMPOS REQUERIDOS EN JSON:
+    - nombreConjunto: Nombre completo y oficial.
+    - nombreAdministrador: Nombre del admin o la empresa delegada.
+    - email: Correo de contacto directo.
+    - direccion: Dirección física exacta.
+    - telefono: Número de contacto.
+    - sitioWeb: URL de referencia.
+    - ciudad: ${ciudad}.
+    - fuente: Link de donde obtuviste la info.
 
-    Enfócate en conjuntos de estratos 4, 5 y 6 para asegurar que tengan administración formal.
-    Si la búsqueda no arroja ${cantidad} resultados únicos de una vez, intenta buscar por diferentes zonas de la ciudad para completar el cupo.
+    Genera una lista de alta calidad técnica y jurídica.
   `;
 
   try {
@@ -58,7 +60,6 @@ export const findLeads = async (ciudad: string, cantidad: number): Promise<Lead[
     return leadsJson.map((lead: any) => ({
       ...lead,
       id: Math.random().toString(36).substr(2, 9),
-      ciudad: lead.ciudad || ciudad,
       fechaCreacion: now,
       status: 'pendiente'
     }));

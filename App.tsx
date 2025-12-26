@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Lead, CampaignLog } from './types';
 import { findLeads } from './services/geminiService';
 import LeadTable from './components/LeadTable';
@@ -11,6 +11,7 @@ import CampaignLogView from './components/CampaignLogView';
 import { GoogleGenAI } from "@google/genai";
 
 const STORAGE_KEY_LOGS = 'SA_CAMPAIGN_LOGS';
+const STORAGE_KEY_GLOBAL_REGISTRY = 'SA_GLOBAL_LEAD_REGISTRY';
 
 const DEFAULT_TEMPLATE = `Bogotá, {{FECHA}}
 
@@ -54,10 +55,11 @@ Sitio Web: https://servijuridicoslaborales.com/`;
 
 const App: React.FC = () => {
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [globalRegistry, setGlobalRegistry] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [isImproving, setIsImproving] = useState(false);
   const [ciudad, setCiudad] = useState('Bogotá');
-  const [cantidad, setCantidad] = useState(10);
+  const [cantidad, setCantidad] = useState(100);
   const [error, setError] = useState<string | null>(null);
   
   const [template, setTemplate] = useState(DEFAULT_TEMPLATE);
@@ -67,25 +69,42 @@ const App: React.FC = () => {
   const [view, setView] = useState<'leads' | 'template' | 'logs'>('leads');
   const [campaignLogs, setCampaignLogs] = useState<CampaignLog[]>([]);
 
+  // Cargar historial y registro global al inicio
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY_LOGS);
-    if (saved) {
-      try {
-        setCampaignLogs(JSON.parse(saved));
-      } catch (e) {
-        console.error("Error parsing campaign logs", e);
-      }
-    }
+    const savedLogs = localStorage.getItem(STORAGE_KEY_LOGS);
+    if (savedLogs) setCampaignLogs(JSON.parse(savedLogs));
+
+    const savedRegistry = localStorage.getItem(STORAGE_KEY_GLOBAL_REGISTRY);
+    if (savedRegistry) setGlobalRegistry(JSON.parse(savedRegistry));
   }, []);
 
   const handleSearch = async () => {
     setLoading(true);
     setError(null);
     try {
-      const newLeads = await findLeads(ciudad, cantidad);
-      setLeads(prev => [...newLeads, ...prev]);
+      // Pedimos a la IA que busque, pasando información sobre la ciudad
+      const results = await findLeads(ciudad, cantidad);
+      
+      // Filtrar resultados contra el registro global para asegurar que son NUEVOS
+      const newLeads = results.filter(lead => {
+        const identity = `${lead.nombreConjunto.toLowerCase().trim()}_${lead.ciudad.toLowerCase().trim()}`;
+        return !globalRegistry.includes(identity);
+      });
+
+      if (newLeads.length === 0 && results.length > 0) {
+        setError("La IA encontró resultados pero todos ya existen en tu historial global. Intenta con otra zona o ciudad.");
+      } else {
+        // Actualizar registro global con las nuevas identidades
+        const newIdentities = newLeads.map(l => `${l.nombreConjunto.toLowerCase().trim()}_${l.ciudad.toLowerCase().trim()}`);
+        const updatedRegistry = [...globalRegistry, ...newIdentities];
+        setGlobalRegistry(updatedRegistry);
+        localStorage.setItem(STORAGE_KEY_GLOBAL_REGISTRY, JSON.stringify(updatedRegistry));
+
+        // Añadir a la lista actual de la sesión
+        setLeads(prev => [...newLeads, ...prev]);
+      }
     } catch (err: any) {
-      setError("No se pudieron obtener los datos. Verifica tu conexión.");
+      setError("Error en la búsqueda. Por favor reintenta.");
     } finally {
       setLoading(false);
     }
@@ -97,7 +116,7 @@ const App: React.FC = () => {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
-        contents: `Eres un experto en marketing jurídico. Mejora esta propuesta de la Dra. Lulú Cely Rubiano y Jairo Segura A. para que sea más impactante, pero mantén EXACTAMENTE las referencias legales y las firmas finales. Propuesta:\n\n${template}`
+        contents: `Mejora esta propuesta legal manteniendo firmas y leyes: ${template}`
       });
       if (response.text) setTemplate(response.text.trim());
     } catch (err) {
@@ -127,18 +146,17 @@ const App: React.FC = () => {
   };
 
   const generateAndDownloadCSV = (data: Lead[], fileName: string) => {
-    const headers = ['CONJUNTO', 'ADMINISTRADOR', 'EMAIL', 'DIRECCION', 'TELEFONO', 'CIUDAD', 'FECHA_CAPTURA', 'SITIO_WEB'];
+    const headers = ['CONJUNTO', 'ADMINISTRADOR', 'EMAIL', 'DIRECCION', 'TELEFONO', 'CIUDAD', 'FECHA_CAPTURA'];
     const csvContent = [
       headers.join(','),
       ...data.map(l => [
         `"${l.nombreConjunto.replace(/"/g, '""')}"`, 
-        `"${(l.nombreAdministrador || 'Señor Administrador').replace(/"/g, '""')}"`, 
+        `"${(l.nombreAdministrador || 'Admin').replace(/"/g, '""')}"`, 
         `"${l.email}"`, 
         `"${l.direccion.replace(/"/g, '""')}"`, 
         `"${l.telefono}"`, 
         `"${l.ciudad}"`,
-        `"${l.fechaCreacion}"`,
-        `"${l.sitioWeb || ''}"`
+        `"${l.fechaCreacion}"`
       ].join(','))
     ].join('\n');
 
@@ -151,32 +169,12 @@ const App: React.FC = () => {
 
   const exportInChunks = (chunkSize: number = 100) => {
     if (leads.length === 0) return;
-
-    // Validación de campos obligatorios antes de exportar
-    const incomplete = leads.filter(l => !l.nombreConjunto || !l.email || !l.direccion || !l.telefono);
-    if (incomplete.length > 0) {
-      if (!confirm(`Hay ${incomplete.length} prospectos con información incompleta. ¿Deseas exportar de todos modos? Se recomienda editarlos primero.`)) {
-        return;
-      }
-    }
-
     const totalChunks = Math.ceil(leads.length / chunkSize);
-    
     for (let i = 0; i < totalChunks; i++) {
-      const start = i * chunkSize;
-      const end = start + chunkSize;
-      const chunk = leads.slice(start, end);
-      const timestamp = new Date().toISOString().split('T')[0];
-      const fileName = `Leads_S&A_${ciudad.replace(/\s+/g, '_')}_Parte_${i + 1}_de_${totalChunks}_${timestamp}.csv`;
-      
-      // Pequeño delay para no saturar las descargas del navegador si son muchos
-      setTimeout(() => {
-        generateAndDownloadCSV(chunk, fileName);
-      }, i * 500);
+      const chunk = leads.slice(i * chunkSize, (i + 1) * chunkSize);
+      generateAndDownloadCSV(chunk, `Lote_Unico_${i + 1}_${ciudad}_${new Date().getTime()}.csv`);
     }
   };
-
-  const procesadosCount = leads.filter(l => l.status === 'procesado').length;
 
   return (
     <div className="min-h-screen bg-slate-50 pb-20">
@@ -199,66 +197,47 @@ const App: React.FC = () => {
 
       <main className="max-w-7xl mx-auto p-4 md:p-8">
         {view === 'template' ? (
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <TemplateManager template={template} setTemplate={setTemplate} onImprove={improveTemplate} isImproving={isImproving} />
-          </div>
+          <TemplateManager template={template} setTemplate={setTemplate} onImprove={improveTemplate} isImproving={isImproving} />
         ) : view === 'logs' ? (
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <h2 className="text-2xl font-black text-slate-800 tracking-tight mb-8">Historial de Campañas</h2>
-            <CampaignLogView logs={campaignLogs} />
-          </div>
+          <CampaignLogView logs={campaignLogs} />
         ) : (
-          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            {/* Panel de Búsqueda */}
-            <div className="bg-white p-8 rounded-2xl shadow-xl border border-slate-200">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-end">
+          <div className="space-y-8 animate-in fade-in duration-500">
+            {/* Panel de Búsqueda de Leads Únicos */}
+            <div className="bg-white p-8 rounded-3xl shadow-xl border border-slate-200 relative overflow-hidden">
+              <div className="absolute top-0 right-0 p-4">
+                <span className="bg-blue-50 text-blue-600 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest border border-blue-100">
+                  Total Únicos Registrados: {globalRegistry.length}
+                </span>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-end mt-4">
                 <div>
-                  <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Ciudad / Sector</label>
-                  <input type="text" value={ciudad} onChange={(e) => setCiudad(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-medium" />
+                  <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Ciudad / Sector Específico</label>
+                  <input type="text" value={ciudad} onChange={(e) => setCiudad(e.target.value)} placeholder="Ej: Usaquén, Bogotá" className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-bold" />
                 </div>
                 <div>
-                  <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Cantidad de Prospectos</label>
-                  <select value={cantidad} onChange={(e) => setCantidad(Number(e.target.value))} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-medium">
-                    <option value={10}>10 Conjuntos</option>
-                    <option value={25}>25 Conjuntos</option>
-                    <option value={50}>50 Conjuntos</option>
-                    <option value={100}>100 Conjuntos (Recomendado)</option>
+                  <label className="block text-xs font-black text-slate-400 uppercase tracking-widest mb-2">Cantidad (Nuevos)</label>
+                  <select value={cantidad} onChange={(e) => setCantidad(Number(e.target.value))} className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none font-bold">
+                    <option value={10}>10 Leads</option>
+                    <option value={50}>50 Leads</option>
+                    <option value={100}>100 Leads (Lote Completo)</option>
                   </select>
                 </div>
                 <button onClick={handleSearch} disabled={loading} className="w-full px-6 py-3.5 bg-blue-600 text-white rounded-xl font-black hover:bg-blue-700 disabled:bg-blue-300 transition-all shadow-lg shadow-blue-200 flex items-center justify-center gap-2">
-                  {loading ? (
-                    <>
-                      <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                      Extrayendo Datos...
-                    </>
-                  ) : '🚀 Iniciar Búsqueda Estratégica'}
+                  {loading ? 'Buscando Datos Únicos...' : '🔍 Buscar Nuevos Prospectos'}
                 </button>
               </div>
+              {error && <p className="mt-4 text-xs font-bold text-red-500 bg-red-50 p-3 rounded-lg border border-red-100">{error}</p>}
             </div>
 
             <div className="flex flex-col md:flex-row items-center justify-between gap-4 px-2">
-              <div className="flex flex-col">
-                <h2 className="text-2xl font-black text-slate-800 tracking-tight">Leads Encontrados</h2>
-                <p className="text-xs text-slate-400 font-bold uppercase tracking-widest">Total en base: {leads.length}</p>
-              </div>
+              <h2 className="text-2xl font-black text-slate-800 tracking-tight">Prospectos de esta sesión ({leads.length})</h2>
               <div className="flex gap-2">
-                <button 
-                  onClick={() => exportInChunks(100)} 
-                  disabled={leads.length === 0} 
-                  className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-black hover:bg-emerald-700 disabled:opacity-50 transition-all shadow-lg shadow-emerald-100"
-                  title="Exporta archivos Excel/CSV de 100 registros cada uno"
-                >
-                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                  </svg>
-                  Exportar en Lotes (100)
+                <button onClick={() => exportInChunks(100)} disabled={leads.length === 0} className="flex items-center gap-2 px-5 py-2.5 bg-emerald-600 text-white rounded-xl text-sm font-black hover:bg-emerald-700 disabled:opacity-50 transition-all shadow-lg">
+                  📥 Descargar Lote de 100
                 </button>
-                <button 
-                  onClick={() => setIsCampaignOpen(true)}
-                  disabled={procesadosCount === 0}
-                  className="flex items-center gap-2 px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-black hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-lg shadow-indigo-100"
-                >
-                  ✉️ Campaña Masiva ({procesadosCount})
+                <button onClick={() => setIsCampaignOpen(true)} disabled={leads.filter(l => l.status === 'procesado').length === 0} className="px-5 py-2.5 bg-indigo-600 text-white rounded-xl text-sm font-black hover:bg-indigo-700 disabled:opacity-50 shadow-lg">
+                  ✉️ Enviar Campaña
                 </button>
               </div>
             </div>
